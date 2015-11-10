@@ -1,0 +1,175 @@
+#! /usr/bin/env python3
+
+# Dhee
+# Makes learning D easier by simplifying the edit-compile-run-debug cycle
+#
+# Copyright (C) 2015, Shriramana Sharma
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+from PyQt4.QtCore import *
+from PyQt4.QtGui import *
+from PyQt4.Qsci import QsciScintilla, QsciLexerD
+from subprocess import Popen, PIPE
+import tempfile
+import os
+import re
+
+class CodeEditor(QsciScintilla):
+
+    # Derived from public domain SimplePythonEditor class by Eli Bendersky (eliben@gmail.com)
+    # URL: http://eli.thegreenplace.net/2011/04/01/sample-using-qscintilla-with-pyqt
+
+    def __init__(self, parent = None):
+
+        QsciScintilla.__init__(self, parent)
+        self.setMinimumSize(600, 400)
+
+        self.template = "import std.stdio;\nvoid main()\n{\n    \n}\n"
+
+        # Set the default font
+        font = QFont("monospace")
+        font.setPointSize(10)
+        self.setFont(font)
+        self.setMarginsFont(font)
+
+        # Margin 0 for line numbers
+        fontMetrics = QFontMetrics(font)
+        self.setMarginsFont(font)
+        self.setMarginWidth(0, fontMetrics.width("00") + 6)
+        self.setMarginLineNumbers(0, True)
+
+        # Current line visible with special background color
+        self.setCaretLineVisible(True)
+        self.setCaretLineBackgroundColor(QApplication.palette().color(QPalette.AlternateBase))
+
+        # Other editor settings
+        self.setAutoIndent(True)
+        self.setIndentationWidth(4)
+        self.setBraceMatching(QsciScintilla.SloppyBraceMatch)
+
+        # Lexer
+        lexer = QsciLexerD()
+        lexer.setFont(font)
+        self.setLexer(lexer)
+
+    def initText(self):
+        self.setText(self.template)
+        self.setCursorPosition(3, 4)
+
+    def textIsTrivial(self):
+        return self.text() in ("", self.template)
+
+class MainWindow(QWidget):
+
+    def __init__(self):
+
+        QWidget.__init__(self)
+
+        self.setWindowTitle("Dhee: Try/Learn D")
+
+        self.editorLabel = QLabel("&Editor:")
+
+        w = self.codeEditor = CodeEditor()
+        w.initText()
+        self.editorLabel.setBuddy(w)
+
+        self.executeButton = QPushButton("E&xecute")
+        self.copyButton = QPushButton("&Copy")
+        self.clearButton = QPushButton("Clea&r")
+        self.resetButton = QPushButton("Re&set")
+
+        self.buttons = self.executeButton, self.copyButton, self.clearButton, self.resetButton
+        self.buttonActions = self.execute, self.copy, self.askAndClear, self.askAndReset
+        for b, a in zip(self.buttons, self.buttonActions):
+            b.clicked.connect(a)
+
+        l = self.buttonLayout = QHBoxLayout()
+        for w in self.buttons:
+            l.addWidget(w)
+
+        self.freshSession = "Status: Fresh session"
+        self.statusLabel = QLabel(self.freshSession)
+        self.codeEditor.textChanged.connect(lambda: self.statusLabel.setText("Status: Code changed"))
+
+        w = self.stdoutTab = QPlainTextEdit()
+        w.setReadOnly(True)
+        w = self.stderrTab = QPlainTextEdit()
+        w.setReadOnly(True)
+        w = self.tabWidget = QTabWidget()
+        w.addTab(self.stdoutTab, "s&tdout")
+        w.addTab(self.stderrTab, "st&derr")
+
+        l = QVBoxLayout()
+        l.addWidget(self.codeEditor)
+        l.addLayout(self.buttonLayout)
+        l.addWidget(self.statusLabel)
+        l.addWidget(self.tabWidget)
+        self.setLayout(l)
+
+    def okToDiscardCode(self, opName):
+        if self.codeEditor.textIsTrivial():
+            return True
+        else:
+            return QMessageBox.warning(self, "Dhee: Confirm {}".format(opName), "You might want to copy the code.\nReally {}?".format(opName), QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes) == QMessageBox.Yes
+            # NOTE: To avoid too much irritation, the default (last parameter) is set to "yes"
+
+    def closeEvent(self, event):
+        if not self.okToDiscardCode("quit"):
+            event.ignore()
+
+    def execute(self):
+        tfile, tfileName = tempfile.mkstemp(suffix = ".d", text = True)
+        open(tfile, "w").write(self.codeEditor.text()) # instantly close
+        self.statusLabel.setText("Status: Running DMD") # doesn't seem to work; donno why
+        dmdProcess = Popen(["dmd", "-w", "-wi", "-run", tfileName], universal_newlines = True, stdout = PIPE, stderr = PIPE)
+        dmdOut, dmdErr = dmdProcess.communicate()
+        dmdExitStatus = dmdProcess.returncode
+        os.remove(tfileName)
+        statusMsg = None
+        if dmdErr == "":
+            self.tabWidget.setCurrentIndex(0)
+            statusMsg = "Compiled and executed successfully"
+        else:
+            self.tabWidget.setCurrentIndex(1)
+            if dmdExitStatus == 0:
+                statusMsg = "Received exit status of 0 (success), but stderr has text"
+            else:
+                statusMsg = "Error in compilation or execution"
+            dmdErr = re.sub(tfileName + "\((\d+)\)", lambda m: str(int(m.group(1)) - 2), dmdErr)
+        self.stdoutTab.setPlainText(dmdOut)
+        self.stderrTab.setPlainText(dmdErr)
+        self.statusLabel.setText("Status: " + statusMsg)
+
+    def copy(self):
+        QApplication.clipboard().setText(self.codeEditor.text())
+        self.statusLabel.setText("Status: Code copied to clipboard")
+
+    def askAndClear(self):
+        if self.okToDiscardCode("clear"):
+            self.codeEditor.clear()
+            self.statusLabel.setText("Status: Code cleared")
+
+    def askAndReset(self):
+        if self.okToDiscardCode("reset"):
+            self.codeEditor.initText()
+            self.stdoutTab.setPlainText("")
+            self.stderrTab.setPlainText("")
+            self.tabWidget.setCurrentIndex(0)
+            self.statusLabel.setText(self.freshSession)
+
+app = QApplication([])
+mainWindow = MainWindow()
+mainWindow.show()
+app.exec_()
