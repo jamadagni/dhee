@@ -79,16 +79,16 @@ class MainWindow(QWidget):
 
         self.setWindowTitle("Dhee: Try/Learn D")
 
-        self.editorLabel = QLabel("&Editor:")
+        self.editorLabel = QLabel("Edit&or:")
 
         w = self.codeEditor = CodeEditor()
         w.initText()
         self.editorLabel.setBuddy(w)
 
-        self.executeButton = QPushButton("E&xecute")
-        self.copyButton = QPushButton("&Copy")
-        self.clearButton = QPushButton("Clea&r")
-        self.resetButton = QPushButton("Re&set")
+        self.executeButton = QPushButton("&Execute")
+        self.copyButton = QPushButton("&Copy code")
+        self.clearButton = QPushButton("Clea&r code")
+        self.resetButton = QPushButton("Re&set app")
 
         self.buttons = self.executeButton, self.copyButton, self.clearButton, self.resetButton
         self.buttonActions = self.execute, self.copy, self.askAndClear, self.askAndReset
@@ -112,6 +112,7 @@ class MainWindow(QWidget):
         w.addTab(self.stderrTab, "st&derr")
 
         l = QVBoxLayout()
+        l.addWidget(self.editorLabel)
         l.addWidget(self.codeEditor)
         l.addLayout(self.buttonLayout)
         l.addWidget(self.statusLabel)
