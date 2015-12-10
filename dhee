@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 
 # Dhee
-# Makes learning D easier by simplifying the edit-compile-run-debug cycle
+# Makes learning C/C++/D easier by simplifying the edit-compile-run-debug cycle
 #
 # Copyright (C) 2015, Shriramana Sharma
 #
@@ -20,11 +20,13 @@
 
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
-from PyQt4.Qsci import QsciScintilla, QsciLexerD
+from PyQt4.Qsci import QsciScintilla, QsciLexerCPP, QsciLexerD
 from subprocess import Popen, PIPE
 import tempfile
 import os
 import re
+
+monospaceFont = QFont("monospace")
 
 class CodeEditor(QsciScintilla):
 
@@ -36,33 +38,28 @@ class CodeEditor(QsciScintilla):
         QsciScintilla.__init__(self, parent)
         self.setMinimumSize(600, 400)
 
-        self.template = "import std.stdio;\nvoid main()\n{\n    \n}\n"
-
-        # Set the default font
-        font = QFont("monospace")
-        font.setPointSize(10)
-        self.setFont(font)
-        self.setMarginsFont(font)
-
-        # Margin 0 for line numbers
-        fontMetrics = QFontMetrics(font)
-        self.setMarginsFont(font)
-        self.setMarginWidth(0, fontMetrics.width("00") + 6)
-        self.setMarginLineNumbers(0, True)
-
         # Current line visible with special background color
         self.setCaretLineVisible(True)
         self.setCaretLineBackgroundColor(QApplication.palette().color(QPalette.AlternateBase))
 
         # Other editor settings
+        self.setMarginLineNumbers(0, True) # first margin to be used for line numbers
         self.setAutoIndent(True)
         self.setIndentationWidth(4)
         self.setBraceMatching(QsciScintilla.SloppyBraceMatch)
 
-        # Lexer
-        lexer = QsciLexerD()
-        lexer.setFont(font)
-        self.setLexer(lexer)
+        # Templates
+        self.templates = {
+            "C"  : "#include <stdio.h>\nint main()\n{\n    \n}\n",
+            "C++": "#include <iostream>\nint main()\n{\n    \n}\n",
+            "D"  : "import std.stdio;\nvoid main()\n{\n    \n}\n"
+            }
+        self.template = None
+
+        # Lexers
+        cppLexer = QsciLexerCPP()
+        dLexer = QsciLexerD()
+        self.lexers = {"C": cppLexer, "C++": cppLexer, "D": dLexer}
 
     def initText(self):
         self.setText(self.template)
@@ -71,19 +68,35 @@ class CodeEditor(QsciScintilla):
     def textIsTrivial(self):
         return self.text() in ("", self.template)
 
+    def setLanguage(self, lang):
+        okToInit = self.textIsTrivial() # doing now since template will be overwritten
+        self.template = self.templates[lang]
+        self.setLexer(self.lexers[lang])
+        if okToInit: self.initText()
+
+    def updateFont(self): # to be called from MainWindow after setting font size
+        self.setMarginsFont(monospaceFont)
+        self.setMarginWidth(0, QFontMetrics(monospaceFont).width("000") + 15) # + needed for some reason...
+        for lexer in self.lexers.values(): lexer.setFont(monospaceFont)
+
 class MainWindow(QWidget):
 
     def __init__(self):
 
+        self.langs = ["C", "C++", "D"] # should be in sync with templates and lexers of CodeEditor
+        self.langSuffixes = dict(zip(self.langs, [".c", ".cpp", ".d"]))
+        self.langDefaultSpecs = dict(zip(self.langs, [
+            ["clang -Wall -Wextra", "-o", "-lm"],
+            ["clang++ -Wall -Wextra", "-o", "-lm"],
+            ["dmd -w -wi", "-of", ""]
+            ]))
+
         QWidget.__init__(self)
+        self.setWindowTitle("Dhee: Quick access to " + "|".join(self.langs))
 
-        self.setWindowTitle("Dhee: Try/Learn D")
-
-        self.editorLabel = QLabel("Edit&or:")
-
+        l = self.codeEditorLabel = QLabel("Edit&or:")
         w = self.codeEditor = CodeEditor()
-        w.initText()
-        self.editorLabel.setBuddy(w)
+        l.setBuddy(w)
 
         self.executeButton = QPushButton("&Execute")
         self.copyButton = QPushButton("&Copy code")
@@ -99,25 +112,130 @@ class MainWindow(QWidget):
         for w in self.buttons:
             l.addWidget(w)
 
-        self.freshSession = "Status: Fresh session"
-        self.statusLabel = QLabel(self.freshSession)
-        self.codeEditor.textChanged.connect(lambda: self.statusLabel.setText("Status: Code changed"))
+        self.stdoutTab = QPlainTextEdit()
+        self.stderrTab = QPlainTextEdit()
+        for w in self.stdoutTab, self.stderrTab:
+            w.setReadOnly(True)
 
-        w = self.stdoutTab = QPlainTextEdit()
-        w.setReadOnly(True)
-        w = self.stderrTab = QPlainTextEdit()
-        w.setReadOnly(True)
+        l = self.fontSizeLabel = QLabel("&Font size:")
+        w = self.fontSizeSpin = QSpinBox()
+        w.setRange(10, 48)
+        l.setBuddy(w)
+
+        w = self.sep = QFrame()
+        w.setFrameStyle(QFrame.HLine | QFrame.Raised)
+
+        l = self.langLabel = QLabel("&Language")
+        w = self.langComboBox = QComboBox()
+        w.addItems(self.langs)
+        l.setBuddy(w)
+
+        e = self.langSpecEdits = [QLineEdit() for i in range(3)]
+
+        self.langSpecWidgetGrid = [
+            [self.fontSizeLabel, self.fontSizeSpin],
+            [self.sep],
+            [self.langLabel,          self.langComboBox, QLabel("Compiler"), e[0]],
+            [QLabel("Output prefix"), e[1],              QLabel("Append"),   e[2]],
+            ]
+
+        l = QGridLayout()
+        for rowNum, rowItem in enumerate(self.langSpecWidgetGrid):
+            for colNum, colItem in enumerate(rowItem):
+                l.addWidget(colItem, rowNum, colNum, 1, 4 if colItem is self.sep else 1)
+
+        w = self.settingsTab = QWidget()
+        w.setLayout(l)
+
         w = self.tabWidget = QTabWidget()
         w.addTab(self.stdoutTab, "s&tdout")
         w.addTab(self.stderrTab, "st&derr")
+        w.addTab(self.settingsTab, "Settin&gs")
+
+        self.freshSession = "Status: Fresh session"
+        self.statusLabel = QLabel(self.freshSession)
 
         l = QVBoxLayout()
-        l.addWidget(self.editorLabel)
+        l.addWidget(self.codeEditorLabel)
         l.addWidget(self.codeEditor)
         l.addLayout(self.buttonLayout)
-        l.addWidget(self.statusLabel)
         l.addWidget(self.tabWidget)
+        l.addWidget(self.statusLabel)
         self.setLayout(l)
+
+        self.readSettings()
+        self.codeEditor.textChanged.connect(self.noteCodeChange)
+        self.fontSizeSpin.valueChanged[int].connect(self.setFontSize)
+        self.langComboBox.currentIndexChanged[str].connect(self.setLanguage)
+
+        for i, specEdit in enumerate(self.langSpecEdits):
+            specEdit.textChanged.connect(lambda text, i = i: self.curLangSpec.__setitem__(i, text)) # default arg needed to enforce use of cur i value
+        self.codeEditor.setFocus()
+
+    def closeEvent(self, event):
+        if not self.okToDiscardCode("quit"):
+            event.ignore()
+        self.writeSettings()
+
+    def writeSettings(self):
+        s = QSettings("Shriramana-Sharma", "Dhee")
+        s.beginGroup("Language")
+        s.setValue("current", self.langComboBox.currentIndex())
+        for lang in self.langs:
+            specs = self.langSpecs[lang]
+            s.beginGroup(lang)
+            s.setValue("compiler", specs[0])
+            s.setValue("outputPrefix", specs[1])
+            s.setValue("append", specs[2])
+            s.endGroup()
+        s.endGroup()
+        s.beginGroup("MainWindow")
+        s.setValue("size", self.size())
+        s.setValue("pos", self.pos())
+        s.setValue("ioFontSize", self.fontSizeSpin.value())
+        s.endGroup()
+
+    def readSettings(self):
+        s = QSettings("Shriramana-Sharma", "Dhee")
+        s.beginGroup("Language")
+        self.langComboBox.setCurrentIndex(int(s.value("current", 2)))
+        self.langSpecs = {}
+        for lang in self.langs:
+            s.beginGroup(lang)
+            specs = []; defaultSpecs = self.langDefaultSpecs[lang]
+            specs.append(s.value("compiler", defaultSpecs[0]))
+            specs.append(s.value("outputPrefix", defaultSpecs[1]))
+            specs.append(s.value("append", defaultSpecs[2]))
+            self.langSpecs[lang] = specs
+            s.endGroup()
+        s.endGroup()
+        s.beginGroup("MainWindow")
+        self.resize(s.value("size", QSize(1, 1))) # will auto-adjust too small size
+        self.move(s.value("pos", QPoint(100, 100)))
+        fontSize = int(s.value("ioFontSize", 10))
+        self.fontSizeSpin.setValue(fontSize)
+        s.endGroup()
+        # following needs to be done manually at startup since signal emitted only at value change
+        self.setFontSize(fontSize)
+        self.setLanguage(self.langComboBox.currentText())
+
+    def noteCodeChange(self):
+        self.needToRecompile = True
+        self.statusLabel.setText("Status: Code changed")
+
+    def setLanguage(self, lang):
+        self.needToRecompile = True
+        self.codeEditor.setLanguage(lang)
+        self.curLangSuffix = self.langSuffixes[lang]
+        self.curLangSpec = self.langSpecs[lang]
+        for spec, lineEdit in zip(self.curLangSpec, self.langSpecEdits):
+            lineEdit.setText(spec)
+
+    def setFontSize(self, pt):
+        monospaceFont.setPointSize(pt)
+        self.codeEditor.updateFont()
+        for w in self.stdoutTab, self.stderrTab:
+            w.setFont(monospaceFont)
 
     def okToDiscardCode(self, opName):
         if self.codeEditor.textIsTrivial():
@@ -126,31 +244,60 @@ class MainWindow(QWidget):
             return QMessageBox.warning(self, "Dhee: Confirm {}".format(opName), "You might want to copy the code.\nReally {}?".format(opName), QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes) == QMessageBox.Yes
             # NOTE: To avoid too much irritation, the default (last parameter) is set to "yes"
 
-    def closeEvent(self, event):
-        if not self.okToDiscardCode("quit"):
-            event.ignore()
-
     def execute(self):
-        tfile, tfileName = tempfile.mkstemp(suffix = ".d", text = True)
-        open(tfile, "w").write(self.codeEditor.text()) # instantly close
-        self.statusLabel.setText("Status: Running DMD") # doesn't seem to work; donno why
-        dmdProcess = Popen(["dmd", "-w", "-wi", "-run", tfileName], universal_newlines = True, stdout = PIPE, stderr = PIPE)
-        dmdOut, dmdErr = dmdProcess.communicate()
-        dmdExitStatus = dmdProcess.returncode
-        os.remove(tfileName)
-        statusMsg = None
-        if dmdErr == "":
-            self.tabWidget.setCurrentIndex(0)
+
+        if not self.needToRecompile: return
+        self.needToRecompile = False
+
+        srcFileHandle, srcFileName = tempfile.mkstemp(suffix = self.curLangSuffix)
+        binFileHandle, binFileName = tempfile.mkstemp()
+        open(srcFileHandle, "w").write(self.codeEditor.text()) # close by object GC
+        os.close(binFileHandle) # manual close needed else it cannot be executed
+
+        prefix, output, suffix = self.curLangSpec
+        compiler = prefix.split()
+        compiler.append(output + binFileName)
+        compiler.append(srcFileName)
+        compiler += suffix.split()
+
+        def run(command):
+            process = Popen(command, universal_newlines = True, stdout = PIPE, stderr = PIPE)
+            stdout, stderr = process.communicate()
+            exitStatus = process.returncode
+            return stdout, stderr, exitStatus
+
+        self.statusLabel.setText("Status: Running compiler")
+        stdout, stderr, exitStatusCompile = run(compiler)
+        if exitStatusCompile == 0:
+            o, e, exitStatusExec = run(binFileName)
+            stdout += o ; stderr += e
+
+        # cleanup
+        # note: some compilers may leave behind object files
+        srcObjFileName = srcFileName[:-len(self.curLangSuffix)] + ".o"
+        binObjFileName = binFileName + ".o"
+        for fn in srcFileName, binFileName, srcObjFileName, binObjFileName:
+            if os.access(fn, os.F_OK): os.remove(fn)
+
+        if exitStatusCompile != 0:
+            statusMsg = "Error in compiling"
+        elif exitStatusExec != 0:
+            statusMsg = "Compiled successfully but error in execution"
+        else:
             statusMsg = "Compiled and executed successfully"
+            if stderr != "":
+                statusMsg += ", but stderr has text"
+
+        if stderr == "":
+            self.tabWidget.setCurrentIndex(0)
         else:
             self.tabWidget.setCurrentIndex(1)
-            if dmdExitStatus == 0:
-                statusMsg = "Received exit status of 0 (success), but stderr has text"
-            else:
-                statusMsg = "Error in compilation or execution"
-            dmdErr = re.sub(tfileName + "\((\d+)\)", lambda m: str(int(m.group(1)) - 2), dmdErr)
-        self.stdoutTab.setPlainText(dmdOut)
-        self.stderrTab.setPlainText(dmdErr)
+            stderr = re.sub(srcFileName + "\((\d+)\)", lambda m: str(int(m.group(1)) - 2), stderr)
+            stderr = stderr.replace(srcFileName, "<src>")
+            stderr = stderr.replace(os.path.basename(srcFileName), "<src>")
+            stderr = stderr.replace(os.path.basename(binFileName), "<bin>")
+        self.stdoutTab.setPlainText(stdout)
+        self.stderrTab.setPlainText(stderr)
         self.statusLabel.setText("Status: " + statusMsg)
 
     def copy(self):
@@ -167,7 +314,6 @@ class MainWindow(QWidget):
             self.codeEditor.initText()
             self.stdoutTab.setPlainText("")
             self.stderrTab.setPlainText("")
-            self.tabWidget.setCurrentIndex(0)
             self.statusLabel.setText(self.freshSession)
 
 app = QApplication([])
