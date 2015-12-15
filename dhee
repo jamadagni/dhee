@@ -36,7 +36,6 @@ class CodeEditor(QsciScintilla):
     def __init__(self, parent = None):
 
         QsciScintilla.__init__(self, parent)
-        self.setMinimumSize(600, 400)
 
         # Current line visible with special background color
         self.setCaretLineVisible(True)
@@ -79,7 +78,7 @@ class CodeEditor(QsciScintilla):
         self.setMarginWidth(0, QFontMetrics(monospaceFont).width("000") + 15) # + needed for some reason...
         for lexer in self.lexers.values(): lexer.setFont(monospaceFont)
 
-class MainWindow(QWidget):
+class MainWindow(QSplitter):
 
     def __init__(self):
 
@@ -91,7 +90,7 @@ class MainWindow(QWidget):
             ["dmd -w -wi", "-of", ""]
             ]))
 
-        QWidget.__init__(self)
+        QSplitter.__init__(self)
         self.setWindowTitle("Dhee: Quick access to " + "|".join(self.langs))
 
         l = self.codeEditorLabel = QLabel("Edit&or:")
@@ -158,10 +157,19 @@ class MainWindow(QWidget):
         l = QVBoxLayout()
         l.addWidget(self.codeEditorLabel)
         l.addWidget(self.codeEditor)
+        w = self.upperWidget = QWidget()
+        w.setLayout(l)
+
+        l = QVBoxLayout()
         l.addLayout(self.buttonLayout)
         l.addWidget(self.tabWidget)
         l.addWidget(self.statusLabel)
-        self.setLayout(l)
+        w = self.lowerWidget = QWidget()
+        w.setLayout(l)
+
+        self.setOrientation(Qt.Vertical)
+        self.addWidget(self.upperWidget)
+        self.addWidget(self.lowerWidget)
 
         self.readSettings()
         self.codeEditor.textChanged.connect(self.noteCodeChange)
@@ -190,8 +198,8 @@ class MainWindow(QWidget):
             s.endGroup()
         s.endGroup()
         s.beginGroup("MainWindow")
-        s.setValue("size", self.size())
         s.setValue("pos", self.pos())
+        s.setValue("splitterSizes", self.saveState())
         s.setValue("ioFontSize", self.fontSizeSpin.value())
         s.endGroup()
 
@@ -210,8 +218,8 @@ class MainWindow(QWidget):
             s.endGroup()
         s.endGroup()
         s.beginGroup("MainWindow")
-        self.resize(s.value("size", QSize(1, 1))) # will auto-adjust too small size
-        self.move(s.value("pos", QPoint(100, 100)))
+        self.move(s.value("pos", QPoint()))
+        self.restoreState(s.value("splitterSizes", QByteArray()))
         fontSize = int(s.value("ioFontSize", 10))
         self.fontSizeSpin.setValue(fontSize)
         s.endGroup()
