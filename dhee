@@ -274,8 +274,11 @@ class MainWindow(QWidget):
 
         # cleanup
         # note: some compilers may leave behind object files
-        srcObjFileName = srcFileName[:-len(self.curLangSuffix)] + ".o"
-        binObjFileName = binFileName + ".o"
+        suffixLen = len(self.curLangSuffix)
+        srcFileNameBase = os.path.basename(srcFileName) # src.d
+        moduleName = srcFileNameBase[:-suffixLen] # src
+        srcObjFileName = srcFileName[:-suffixLen] + ".o" # /tmp/src.o
+        binObjFileName = binFileName + ".o" # /tmp/bin.o
         for fn in srcFileName, binFileName, srcObjFileName, binObjFileName:
             if os.access(fn, os.F_OK): os.remove(fn)
 
@@ -292,9 +295,8 @@ class MainWindow(QWidget):
             self.tabWidget.setCurrentIndex(0)
         else:
             self.tabWidget.setCurrentIndex(1)
-            stderr = re.sub(srcFileName + "\((\d+)\)", lambda m: str(int(m.group(1)) - 2), stderr)
-            stderr = stderr.replace(srcFileName, "<src>")
-            stderr = stderr.replace(os.path.basename(srcFileName), "<src>")
+            for s in srcFileName, srcFileNameBase, moduleName:
+                stderr = stderr.replace(s, "<src>")
             stderr = stderr.replace(os.path.basename(binFileName), "<bin>")
         self.stdoutTab.setPlainText(stdout)
         self.stderrTab.setPlainText(stderr)
