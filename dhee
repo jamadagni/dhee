@@ -291,9 +291,9 @@ class MainWindow(QSplitter):
             if os.access(fn, os.F_OK): os.remove(fn)
 
         if exitStatusCompile != 0:
-            statusMsg = "Error in compiling"
+            statusMsg = "Error in compiling (exit status: {})".format(exitStatusCompile)
         elif exitStatusExec != 0:
-            statusMsg = "Compiled successfully but error in execution"
+            statusMsg = "Compiled successfully but error in execution (exit status: {})".format(exitStatusExec)
         else:
             statusMsg = "Compiled and executed successfully"
             if stderr != "":
