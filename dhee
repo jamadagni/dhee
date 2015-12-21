@@ -178,6 +178,7 @@ class MainWindow(QSplitter):
 
         for i, specEdit in enumerate(self.langSpecEdits):
             specEdit.textChanged.connect(lambda text, i = i: self.curLangSpec.__setitem__(i, text)) # default arg needed to enforce use of cur i value
+            specEdit.textChanged.connect(lambda: setattr(self, "needToRecompile", True))
         self.codeEditor.setFocus()
 
     def closeEvent(self, event):
